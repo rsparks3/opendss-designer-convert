@@ -3,16 +3,18 @@ import logging
 from gdm.distribution import DistributionSystem
 
 import opendss_designer_convert.readers.synergi as synergi_mapper
+from opendss_designer_convert.readers.parallel import ParallelBranchSerializer
 from opendss_designer_convert.readers.reader import AbstractReader
 from opendss_designer_convert.readers.synergi.utils import (
     SynergiDatabase,
     build_node_feeder_map,
+    propagate_bus_voltages,
     read_synergi_data,
 )
 
 logger = logging.getLogger(__name__)
 
-class Reader(AbstractReader):
+class Reader(ParallelBranchSerializer, AbstractReader):
 
     # Order matters — feeders/substations first, equipment before components that reference them
     component_types = [
@@ -39,8 +41,10 @@ class Reader(AbstractReader):
     ]
 
     def __init__(self, model_file, equipment_file):
-        model_file = SynergiDatabase(model_file)
-        equipment_file = SynergiDatabase(equipment_file)
+        if not isinstance(model_file, SynergiDatabase):
+            model_file = SynergiDatabase(model_file)
+        if not isinstance(equipment_file, SynergiDatabase):
+            equipment_file = SynergiDatabase(equipment_file)
         self.system = DistributionSystem(auto_add_composed_components=True)
         self.read(model_file, equipment_file)
 
@@ -148,6 +152,12 @@ class Reader(AbstractReader):
                 except Exception as e:
                     logger.warning(f"Failed to parse {component_type} row {idx}: {e}")
             self.system.add_components(*components)
+
+        # Devices that share a section go in series, not in parallel.
+        self.serialize_parallel_branches()
+        changed = propagate_bus_voltages(self.system)
+        if changed:
+            logger.info("Set the nominal voltage of %d buses from transformer ratings", changed)
 
     def get_system(self) -> DistributionSystem:
         return self.system

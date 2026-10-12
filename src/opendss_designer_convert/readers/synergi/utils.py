@@ -1,8 +1,12 @@
+import logging
+import math
 import re
 
 import pandas as pd
 from access_parser import AccessParser
 from gdm.distribution.enums import Phase
+
+logger = logging.getLogger(__name__)
 
 _POS_MAP = {0: Phase.A, 1: Phase.B, 2: Phase.C, 3: Phase.N}
 _PHASE_ORDER = {Phase.A: 0, Phase.B: 1, Phase.C: 2, Phase.N: 3}
@@ -110,3 +114,117 @@ def read_synergi_data(database, table_name) -> pd.DataFrame:
     if not isinstance(database, SynergiDatabase):
         database = SynergiDatabase(database)
     return database.table(table_name)
+
+
+def propagate_bus_voltages(system) -> int:
+    """Carry nominal voltages from the source through transformers.
+
+    The bus mapper gives every node its feeder's nominal voltage, which is
+    wrong past a step or auto transformer (an 11.5 kV section behind a
+    12.47/11.5 kV unit, say): loads there would be rated for the wrong kV.
+    Walk outwards from the voltage source(s); a transformer sets the voltage
+    of the buses on its far side from its winding ratings. Returns the number
+    of buses whose voltage changed.
+    """
+    from collections import deque
+
+    from gdm.distribution.components import (
+        DistributionBus,
+        DistributionRegulator,
+        DistributionTransformer,
+        DistributionVoltageSource,
+    )
+    from gdm.distribution.enums import VoltageTypes
+    from gdm.quantities import Voltage
+
+    graph = system.get_undirected_graph()
+    buses = {bus.name: bus for bus in system.get_components(DistributionBus)}
+    queue = deque()
+    seen = set()
+    for source in system.get_components(DistributionVoltageSource):
+        if source.bus.name in buses and source.bus.name not in seen:
+            seen.add(source.bus.name)
+            queue.append(source.bus.name)
+
+    def ln_kv(winding):
+        kv = winding.rated_voltage.to("kilovolt").magnitude
+        if winding.voltage_type == VoltageTypes.LINE_TO_LINE:
+            kv = kv / math.sqrt(3)
+        return kv
+
+    changed = 0
+    while queue:
+        name = queue.popleft()
+        here = buses[name]
+        for _, other, data in graph.edges(name, data=True):
+            if other in seen or other not in buses:
+                continue
+            kv = None
+            if data.get("type") is DistributionRegulator:
+                _regulator_face_source(
+                    system.get_component(DistributionRegulator, data["name"]), name
+                )
+            if data.get("type") is DistributionTransformer:
+                xfmr = system.get_component(DistributionTransformer, data["name"])
+                _face_source(xfmr, name, ln_kv)
+                names = [b.name for b in xfmr.buses]
+                if other in names and len(xfmr.equipment.windings) > names.index(other):
+                    kv = ln_kv(xfmr.equipment.windings[names.index(other)])
+            if kv is None:
+                kv = here.rated_voltage.to("kilovolt").magnitude
+                if here.voltage_type == VoltageTypes.LINE_TO_LINE:
+                    kv = kv / math.sqrt(3)
+            bus = buses[other]
+            new = Voltage(round(kv, 5), "kilovolt")
+            old = bus.rated_voltage.to("kilovolt").magnitude
+            if bus.voltage_type == VoltageTypes.LINE_TO_LINE:
+                old = old / math.sqrt(3)
+            if abs(old - kv) > 1e-3:
+                changed += 1
+            bus.rated_voltage = new
+            bus.voltage_type = VoltageTypes.LINE_TO_GROUND
+            seen.add(other)
+            queue.append(other)
+    return changed
+
+
+def _face_source(xfmr, source_side_bus, ln_kv) -> None:
+    """Turn a two-winding transformer so its high-voltage winding faces the source.
+
+    Synergi section from/to nodes do not give the direction of flow, but the
+    winding data is high side first. Fed from its low-voltage end, a step-down
+    unit would step the feeder voltage *up*.
+    """
+    windings = xfmr.equipment.windings
+    names = [b.name for b in xfmr.buses]
+    if len(windings) != 2 or len(names) != 2 or source_side_bus not in names:
+        return
+    here = names.index(source_side_bus)
+    if ln_kv(windings[here]) >= ln_kv(windings[1 - here]):
+        return
+    xfmr.buses = list(reversed(xfmr.buses))
+    xfmr.winding_phases = list(reversed(xfmr.winding_phases))
+    logger.warning(
+        "Transformer %s is fed from its low-voltage side in the section data; turned it "
+        "so the high-voltage winding faces the source",
+        xfmr.name,
+    )
+
+
+def _regulator_face_source(regulator, source_side_bus) -> None:
+    """Put a regulator's source-side winding (winding 1) on the bus nearer the source.
+
+    As with transformers, the section's from/to order is not the direction of
+    flow. A regulator written backwards regulates the wrong side: raising its
+    tap lowers the voltage it is meant to raise.
+    """
+    names = [b.name for b in regulator.buses]
+    if len(names) != 2 or names[0] == source_side_bus or source_side_bus not in names:
+        return
+    regulator.buses = list(reversed(regulator.buses))
+    regulator.winding_phases = list(reversed(regulator.winding_phases))
+    for controller in regulator.controllers or []:
+        if getattr(controller, "controlled_bus", None) is not None:
+            if controller.controlled_bus.name == names[1]:
+                controller.controlled_bus = regulator.buses[1]
+    logger.info("Regulator %s turned to face the source", regulator.name)

@@ -64,6 +64,13 @@ class DistributionVoltageSourceMapper(SynergiMapper):
         if not candidates:
             return None
 
+        # Case 0: Synergi names a feeder's source node after the feeder. When
+        # that node is a real bus, it is the head, whichever way the sections
+        # around it are drawn (in the samples the breaker section points *to*
+        # it, so it is never a from-only candidate).
+        if feeder_id in from_ids | to_ids and self._bus_exists(feeder_id):
+            return feeder_id
+
         # Case 1: feeder name is a virtual head node
         if feeder_id in candidates:
             for s in feeder_sections:
@@ -77,9 +84,18 @@ class DistributionVoltageSourceMapper(SynergiMapper):
         # Case 3: multiple candidates — pick most connected
         from_count = {n: sum(1 for s in feeder_sections if str(s["FromNodeId"]).strip() == n)
                       for n in candidates}
-        best = max(from_count, key=from_count.get)
+        # Ties broken by name: set order varies between runs, and the source
+        # must not move from one conversion to the next.
+        best = min(from_count, key=lambda n: (-from_count[n], n))
         logger.warning(f"Feeder {feeder_id}: {len(candidates)} head candidates, chose {best!r}")
         return best
+
+    def _bus_exists(self, node_id):
+        try:
+            self.system.get_component(DistributionBus, sanitize_name(node_id))
+            return True
+        except Exception:
+            return False
 
     def map_bus(self, head_node_id):
         bus_name = sanitize_name(head_node_id)
