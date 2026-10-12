@@ -12,6 +12,7 @@ from gdm.distribution.equipment.distribution_transformer_equipment import (
 from gdm.quantities import ApparentPower, Current, Voltage
 from infrasys.quantities import Time
 
+from opendss_designer_convert.constants import LL_LN_CONVERSION_FACTOR
 from opendss_designer_convert.readers.cyme.constants import ModelUnitSystem
 from opendss_designer_convert.readers.cyme.cyme_mapper import CymeMapper
 
@@ -41,24 +42,55 @@ class DistributionRegulatorMapper(CymeMapper):
 
         buses = self.map_buses(section)
 
-        # Keep multi-phase regulators as single multi-phase component, don't decompose
-        winding_phases = [phases, phases]
-        equipment = self.map_equipment(row, equipment_row, phases, buses, base_name)
-        controllers = self.map_controllers(row, equipment_row, phases, buses[1], base_name)
+        if len(phases) > 1 and not self.is_three_phase_unit(equipment_row):
+            # A bank of single-phase regulators (CYME equipment Type 0, e.g. the
+            # IEEE 13 and 123 feeders): one transformer and one RegControl per
+            # phase, each following its own phase. Writing the bank as one
+            # three-phase transformer let only the phase-A control act on all
+            # three phases (upstream issue #77).
+            units = [
+                (f"{base_name}_{self.map_phase_suffix(phase)}", [phase]) for phase in phases
+            ]
+        else:
+            # A gang-operated three-phase regulator (Type 1), or a single unit.
+            units = [(base_name, phases)]
 
-        try:
-            regulator = DistributionRegulator.model_construct(
-                name=base_name,
-                buses=buses,
-                winding_phases=winding_phases,
-                equipment=equipment,
-                controllers=controllers,
+        regulators = []
+        for unit_name, unit_phases in units:
+            single_unit = len(units) > 1
+            equipment = self.map_equipment(
+                row, equipment_row, unit_phases, buses, unit_name, single_unit=single_unit
             )
-            used_sections.add(section_id)
-            return [regulator]
-        except Exception as e:
-            logger.warning(f"Failed to create DistributionRegulator {base_name}: {e}")
+            controllers = self.map_controllers(
+                row, equipment_row, unit_phases, buses[1], unit_name
+            )
+            if single_unit:
+                for controller in controllers:
+                    controller.name = unit_name
+            try:
+                regulators.append(
+                    DistributionRegulator.model_construct(
+                        name=unit_name,
+                        buses=list(buses),
+                        winding_phases=[unit_phases, unit_phases],
+                        equipment=equipment,
+                        controllers=controllers,
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create DistributionRegulator {unit_name}: {e}")
+        if not regulators:
             return None
+        used_sections.add(section_id)
+        return regulators
+
+    @staticmethod
+    def is_three_phase_unit(equipment_row):
+        """CYME [REGULATOR] Type: 0 = single-phase unit(s), 1 = three-phase unit."""
+        try:
+            return int(float((equipment_row or {}).get("Type", 0) or 0)) == 1
+        except (TypeError, ValueError):
+            return False
 
     def map_name(self, row):
         return row["SectionID"]
@@ -85,11 +117,17 @@ class DistributionRegulatorMapper(CymeMapper):
             phases.append(Phase.C)
         return phases
 
-    def map_equipment(self, row, equipment_row, phases, buses, regulator_name):
+    def map_equipment(
+        self, row, equipment_row, phases, buses, regulator_name, single_unit=False
+    ):
         total_taps = int(float((equipment_row or {}).get("Taps", 32) or 32))
         max_buck = float(row.get("MaxBuck", (equipment_row or {}).get("MaxBuck", 10)) or 10)
         max_boost = float(row.get("MaxBoost", (equipment_row or {}).get("MaxBoost", 10)) or 10)
         kva = float((equipment_row or {}).get("KVA", 100) or 100)
+        if single_unit:
+            # KVA is the bank rating; KVA_1 (when given) is one unit's.
+            unit_kva = float((equipment_row or {}).get("KVA_1", 0) or 0)
+            kva = unit_kva if unit_kva > 0 else kva
 
         connection = self.map_connection_type(row)
         kv_ln = float((equipment_row or {}).get("KVLN", 0) or 0)
@@ -105,10 +143,23 @@ class DistributionRegulatorMapper(CymeMapper):
             secondary_voltage_type = (
                 buses[1].voltage_type if buses[1].voltage_type else VoltageTypes.LINE_TO_LINE
             )
+            if (
+                len(phases) == 1
+                and connection == ConnectionType.STAR
+                and secondary_voltage_type == VoltageTypes.LINE_TO_LINE
+            ):
+                # A single wye unit sees line-to-neutral voltage.
+                winding_voltage = Voltage(
+                    winding_voltage.to("kilovolt").magnitude / LL_LN_CONVERSION_FACTOR,
+                    "kilovolt",
+                )
+                primary_voltage_type = VoltageTypes.LINE_TO_GROUND
+                secondary_voltage_type = VoltageTypes.LINE_TO_GROUND
 
-        primary_taps = [
-            self.map_tap_position(row, phase, total_taps, max_buck, max_boost) for phase in phases
-        ]
+        # The regulator boosts or bucks on its load-side winding; the source-side
+        # winding stays at 1.0. Upstream put the same tap on both windings,
+        # which made the starting ratio 1:1 whatever the CYME tap position was.
+        primary_taps = [1.0 for _ in phases]
         secondary_taps = [
             self.map_tap_position(row, phase, total_taps, max_buck, max_boost) for phase in phases
         ]

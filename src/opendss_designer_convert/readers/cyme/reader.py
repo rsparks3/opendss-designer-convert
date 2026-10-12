@@ -3,7 +3,7 @@ from collections import defaultdict, deque
 
 from gdm.distribution.components import DistributionVoltageSource
 from gdm.distribution.components.distribution_bus import DistributionBus
-from gdm.distribution.components.distribution_transformer import DistributionTransformer
+from gdm.distribution.components.distribution_regulator import DistributionRegulator
 from gdm.distribution.distribution_system import DistributionSystem
 from gdm.distribution.enums import ConnectionType, VoltageTypes
 from gdm.quantities import Voltage
@@ -14,12 +14,21 @@ import opendss_designer_convert.readers.cyme as cyme_mapper
 from opendss_designer_convert.constants import LL_LN_CONVERSION_FACTOR
 from opendss_designer_convert.readers.cyme.constants import ModelUnitSystem
 from opendss_designer_convert.readers.cyme.utils import network_truncation, read_cyme_data
+from opendss_designer_convert.readers.parallel import ParallelBranchSerializer
 from opendss_designer_convert.readers.reader import AbstractReader
 
 logger = logging.getLogger(__name__)
 
 
-class Reader(AbstractReader):
+def _load_model_sort_key(model_id: str):
+    """Numeric IDs in numeric order first, then anything else alphabetically."""
+    try:
+        return (0, float(model_id), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, str(model_id))
+
+
+class Reader(ParallelBranchSerializer, AbstractReader):
     # Order of components is important
     component_types = [
         "DistributionBus",  # First as other components connect to buses
@@ -68,7 +77,7 @@ class Reader(AbstractReader):
 
     def _get_unit_system(self, network_file):
         # Default to SI if unit system not specified in file
-        with open(network_file, "r") as f:
+        with open(network_file, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if f"[{ModelUnitSystem.SI.value}]" in line:
                     return ModelUnitSystem.SI
@@ -338,14 +347,24 @@ class Reader(AbstractReader):
             data = read_cyme_data(equipment_file, cyme_section)
         elif cyme_file == "Load":
             data = read_cyme_data(load_file, cyme_section)
+            if data.empty or "LoadModelID" not in data.columns:
+                return data
             if load_model_id is not None:
-                data = data[data["LoadModelID"] == load_model_id]
+                data = data[data["LoadModelID"] == str(load_model_id)]
                 logger.info(f"Filtered Load data by LoadModelID: {load_model_id}")
             else:
-                if len(data["LoadModelID"].unique()) > 1:
-                    raise ValueError(
-                        f"Multiple LoadModelIDs found in load data: {data['LoadModelID'].unique()}. Please specify load_model_id"
+                model_ids = sorted(data["LoadModelID"].unique(), key=_load_model_sort_key)
+                if len(model_ids) > 1:
+                    # A load file can carry several load models (seasons,
+                    # scenarios). Take the first rather than refusing.
+                    chosen = model_ids[0]
+                    logger.warning(
+                        "The load file has %d load models (%s); converted load model %s",
+                        len(model_ids),
+                        ", ".join(model_ids),
+                        chosen,
                     )
+                    data = data[data["LoadModelID"] == chosen]
 
         else:
             raise ValueError(f"Unknown CYME file {cyme_file}")
@@ -470,140 +489,10 @@ class Reader(AbstractReader):
         return bus_obj_map
 
     def serialize_parallel_branches(self):
-        """
-        Detect parallel branches and serialize them by inserting new buses and copying components as needed.
-        All non-transformer parallel branches are chained in series. Only transformers may remain in parallel.
-        After serialization, validates that no non-transformer parallel edges remain and that parallel
-        transformers do not overlap on phases.
-        """
-
-        parallel_components = self._get_parallel_components()
-
-        for i, comps in enumerate(parallel_components):
-            transformers, non_transformers = self._sort_parallel_components(comps)
-            if transformers:
-                self._serialize_parallel_with_transformers(i, transformers, non_transformers)
-            else:
-                self._serialize_parallel_without_transformers(i, non_transformers)
-
-    def _clone_with_new_name(self, obj, new_name):
-        values = {}
-        for field in type(obj).model_fields:
-            cur_val = getattr(obj, field)
-            if field == "name":
-                val = new_name
-            elif field in ("uuid",):
-                continue
-            else:
-                val = cur_val
-            values[field] = val
-        return type(obj).model_construct(**values)
-
-    def _create_parallel_bus(self, base_bus, index, edge_index):
-        new_bus = self._clone_with_new_name(base_bus, f"{base_bus.name}_{index}_{edge_index}")
-        self.system.add_component(new_bus)
-        return new_bus
-
-    def _serialize_parallel_with_transformers(self, edge_index, transformers, non_transformers):
-        xfmr_primary_base = transformers[0].buses[0]
-        xfmr_primary = self._clone_with_new_name(
-            xfmr_primary_base, f"{xfmr_primary_base.name}_primary"
-        )
-        self.system.add_component(xfmr_primary)
-        xfmr_secondary = transformers[0].buses[1]
-
-        for j, comp in enumerate(non_transformers):
-            if j == 0:
-                if len(non_transformers) > 1:
-                    new_bus = self._create_parallel_bus(
-                        non_transformers[j + 1].buses[1], j, edge_index
-                    )
-                    comp.buses[0] = new_bus
-                comp.buses[1] = xfmr_primary
-            elif j < len(non_transformers) - 1:
-                comp.buses[1] = non_transformers[j - 1].buses[0]
-                new_bus = self._create_parallel_bus(
-                    non_transformers[j + 1].buses[1], j, edge_index
-                )
-                comp.buses[0] = new_bus
-            else:
-                comp.buses[1] = non_transformers[j - 1].buses[0]
-
-        for comp in transformers:
-            comp.buses[0] = xfmr_primary
-            comp.buses[1] = xfmr_secondary
-
-    def _serialize_parallel_without_transformers(self, edge_index, non_transformers):
-        for j, comp in enumerate(non_transformers[:-1]):
-            new_bus = self._create_parallel_bus(comp.buses[1], j, edge_index)
-            comp.buses[1] = new_bus
-            non_transformers[j + 1].buses[0] = new_bus
-
-    def _get_parallel_edges(self):
-        G = self.system.get_undirected_graph()
-        edges = defaultdict(list)
-        for u, v, key in G.edges(keys=True):
-            edge_pair = tuple(sorted((u, v)))
-            edges[edge_pair].append(key)
-        return G, {edge: keys for edge, keys in edges.items() if len(keys) > 1}
-
-    def _get_parallel_components(self) -> list[list[Component]]:
-        G, parallel_edges = self._get_parallel_edges()
-
-        parallel_edges = {
-            edge: keys
-            for edge, keys in parallel_edges.items()
-            if not all(
-                G.get_edge_data(edge[0], edge[1], key)["type"] == DistributionTransformer
-                for key in keys
-            )
-        }
-
-        parallel_components = list()
-        for edge in parallel_edges:
-            comps = list()
-            for key in parallel_edges[edge]:
-                edge_data = G.get_edge_data(edge[0], edge[1], parallel_edges[edge][key])
-                comps.append(self.system.get_component(edge_data["type"], edge_data["name"]))
-            parallel_components.append(comps)
-
-        return parallel_components
-
-    def _sort_parallel_components(
-        self, comps: list[Component]
-    ) -> tuple[list[DistributionTransformer], list[Component]]:
-        name_counts = defaultdict(int)
-        for comp in comps:
-            name_counts[comp.name] += 1
-
-        seen_names = defaultdict(int)
-        renamed_components = []
-        for comp in comps:
-            if name_counts[comp.name] > 1:
-                new_name = f"{comp.name}_{seen_names[comp.name]}"
-                # Use model_construct to avoid validation before assign_bus_voltages()
-                # At this point buses have placeholder voltages, so pydantic validation would fail
-                values = {}
-                for field in type(comp).model_fields:
-                    cur_val = getattr(comp, field)
-                    if field == "name":
-                        val = new_name
-                    elif field in ("uuid",):
-                        continue
-                    else:
-                        val = cur_val
-                    values[field] = val
-                new_comp = type(comp).model_construct(**values)
-                self.system.add_component(new_comp)
-                self.system.remove_component(comp)
-                renamed_components.append(new_comp)
-                seen_names[comp.name] += 1
-            else:
-                renamed_components.append(comp)
-
-        transformers = [c for c in renamed_components if isinstance(c, DistributionTransformer)]
-        non_transformers = [
-            c for c in renamed_components if not isinstance(c, DistributionTransformer)
-        ]
-
-        return transformers, non_transformers
+        super().serialize_parallel_branches()
+        # A CYME regulator senses its own load-side terminal (with line-drop
+        # compensation). Serializing may have moved that terminal onto a new
+        # bus, so point each controller at where the regulator now ends.
+        for regulator in self.system.get_components(DistributionRegulator):
+            for controller in regulator.controllers or []:
+                controller.controlled_bus = regulator.buses[1]

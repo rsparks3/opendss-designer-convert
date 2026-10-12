@@ -23,7 +23,7 @@ def read_cyme_data(  # noqa: C901
 ):
     all_data = []
     headers = None
-    with open(cyme_file) as f:
+    with open(cyme_file, encoding="utf-8", errors="replace") as f:
         reading = False
         feeder_id = None
         feeder_object_map = {}
