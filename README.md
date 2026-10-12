@@ -1,243 +1,275 @@
-# DiTTo - Distribution Transformation Tool
+# opendss-designer-convert
 
+Converts **CYME** and **Synergi Electric** distribution models to **OpenDSS**.
+It is the optional import plugin for OpenDSS Designer, and also works on its own from Python or the command line.
 
-[![PyPI version](https://badge.fury.io/py/NREL-ditto.svg)](https://pypi.org/project/NREL-ditto/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-yellow.svg)](https://opensource.org/license/bsd-3-clause/)
-[![codecov](https://codecov.io/gh/NLR-Distribution-Suite/ditto/graph/badge.svg?token=1TSI2L9HNR)](https://codecov.io/gh/NLR-Distribution-Suite/ditto) •  [![Documentation](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/gh-pages.yml/badge.svg?branch=main)](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/gh-pages.yml) . [![pages-build-deployment](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/pages/pages-build-deployment) . [![Pytest](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/pull_request_tests.yml/badge.svg)](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/pull_request_tests.yml) . [![Upload to PyPi](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/publish_to_pypi.yaml/badge.svg)](https://github.com/NLR-Distribution-Suite/ditto/actions/workflows/publish_to_pypi.yaml) • [![CodeFactor](https://www.codefactor.io/repository/github/nlr-distribution-suite/ditto/badge)](https://www.codefactor.io/repository/github/nlr-distribution-suite/ditto) • ![MCP Server](https://img.shields.io/badge/MCP_Server-enabled-brightgreen) • ![MCP Tools](https://img.shields.io/badge/MCP_Tools-12-blue) • [![PyPI Downloads](https://static.pepy.tech/personalized-badge/nrel-ditto?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/nrel-ditto)
+It is a trimmed fork of NREL's **DiTTo** (Distribution Transformation Tool):
+DiTTo's CYME and Synergi readers and its OpenDSS writer, renamed to the
+`opendss_designer_convert` package, with the rest of DiTTo removed and a
+number of conversion bugs fixed (listed below).
 
-# DiTTo
+**Milsoft WindMil is not supported.** The DiTTo this fork is based on has no
+WindMil reader. The older, archived DiTTo has two (`windmil`, XML, and
+`windmil_ascii`), but no WindMil sample data exists in either repository, so
+nothing could be checked against real WindMil files and neither reader was
+carried over. `convert("windmil", ...)` raises `ConversionError` saying so.
 
+## Provenance and licence
 
-DiTTo is an open-source tool developed by NREL's Distribution Suites team for converting and modifying electrical distribution system models. It enables seamless conversion between different distribution network formats, with the primary domain being substations to customers.
+- Upstream: <https://github.com/NREL-Distribution-Suites/ditto> (now served
+  from `NLR-Distribution-Suite/ditto`), branch `main` at `f596f5b`
+  (2026-10-07). This is the 2024-2026 rewrite of DiTTo on
+  [grid-data-models](https://github.com/NLR-Distribution-Suite/grid-data-models).
+  Its git history is kept in this repository, so authorship of every upstream
+  line is preserved.
+- The Synergi reader comes from upstream branch `te/synergi_reader`
+  (`a25bba9`, 2026-05-08, open as upstream PR #68), merged so its history is
+  kept too.
+- The older DiTTo (<https://github.com/NREL/ditto>, now
+  `NatLabRockies/ditto`, last change December 2023) is a different code base.
+  Nothing from it is used except the Synergi sample databases for testing
+  (see "Test data").
+- Licence: BSD-3-Clause, as upstream. See [LICENSE](LICENSE): the original
+  Alliance for Energy Innovation copyright notice is kept and a line added for
+  the changes made here.
 
-> **DiTTo is a best-in-class distribution-system model conversion tool, with round-trip validation designed to deliver near-lossless conversion of topology, equipment, and operating behavior.**
-
-## How it Works
-Flexible representations for power system components are defined in [Grid-Data-Models (GDM)](https://github.com/NLR-Distribution-Suite/grid-data-models) format. 
-DiTTo implements a _many-to-one-to-many_ parsing framework, making it modular and robust. The [reader modules](https://github.com/NLR-Distribution-Suite/ditto/tree/main/src/ditto/readers) parse data files of distribution system format (e.g. OpenDSS) and create an object for each electrical component. These objects are stored in a [GDM DistributionSystem](https://github.com/NLR-Distribution-Suite/grid-data-models/blob/main/src/gdm/distribution/distribution_system.py) instance. The [writer modules](https://github.com/NLR-Distribution-Suite/ditto/tree/main/src/ditto/writers) are then used to export the data stored in memory to a selected output distribution system format (e.g. OpenDSS) which are written to disk.
-
-- **Multi-format Support**: Read and write models from OpenDSS, CIM/IEC 61968-13, and more
-- **Robust Architecture**: Many-to-one-to-many parsing framework ensures modularity and extensibility
-- **GDM Integration**: Built on [Grid-Data-Models (GDM)](https://github.com/NLR-Distribution-Suite/grid-data-models) for flexible power system component representation
-- **Validation**: Thorough model validation during conversion
-- **Serialization**: Full JSON serialization/deserialization support for converted models
-
-## OpenDSS Round-Trip Validation
-
-DiTTo uses round-trip comparisons to verify that a model converted through GDM
-and written back to OpenDSS preserves electrical behavior. The latest corrected
-comparison uses the same deterministic solve policy on both sides: regulator
-and capacitor controls disabled, transformer taps fixed at 1.0 pu, and
-capacitor banks on.
-
-| Circuit | Source P (pre → post) | Source Q (pre → post) | Total loss kW (pre → post) | Line loss kW (pre → post) | Transformer loss kW (pre → post) | Dashboard Vmin (pre → post) |
-|---|---:|---:|---:|---:|---:|---:|
-| 123Bus | 3,482.7 → 3,480.9 (-0.050%) | 1,358.1 → 1,357.0 (-0.081%) | 96.73 → 96.62 | 96.73 → 96.61 | 0.0003 → 0.0003 | 0.926538 → 0.926634 |
-| 13Bus | 3,400.7 → 3,398.9 (-0.054%) | 1,707.7 → 1,706.4 (-0.077%) | 112.57 → 112.41 | 106.47 → 106.31 | 6.10 → 6.10 | 0.905202 → 0.905286 |
-| CKT7 | 76,311.2 → 76,311.2 (~0.000%) | 24,148.6 → 24,148.0 (-0.002%) | 239.07 → 238.22 | 172.17 → 171.30 | 66.91 → 66.92 | 0.813033 → 0.813158 |
-| CKT24 | 50,727.1 → 50,758.4 (+0.062%) | 11,498.1 → 11,410.4 (-0.763%) | 1,002.51 → 1,003.83 | 473.19 → 473.97 | 529.32 → 529.87 | 0.863240 → 0.863664 |
-| P4U | 2,254.5 → 2,254.6 (+0.004%) | 689.2 → 689.6 (+0.063%) | 172.83 → 172.93 | 21.93 → 21.94 | 150.90 → 150.99 | 0.944773 → 0.944734 |
-| SFO | 5,056.4 → 5,056.3 (-0.002%) | 828.3 → 833.2 (+0.589%) | 163.99 → 163.90 | 71.82 → 70.12 | 92.16 → 93.78 | 0.959260 → 0.959116 |
-| 8500-Node | 11,232.4 → 11,248.2 (+0.141%) | 1,869.1 → 1,839.3 (-1.598%) | 1,211.72 → 1,219.91 | 1,043.64 → 1,040.20 | 168.08 → 179.71 | 0.785291 → 0.785770 |
-
-The voltage minimums use phase terminals that are actually connected in the
-OpenDSS topology. This avoids treating malformed, unserved switch conductors
-as energized buses. The complete machine-readable comparison is generated in
-`corrected_roundtrip_comparison.csv` by the round-trip validation workflow.
-
-## How It Works
-
-DiTTo implements a **many-to-one-to-many** parsing framework:
+## Install
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   OpenDSS   │     │             │     │   OpenDSS   │
-├─────────────┤     │    GDM      │     ├─────────────┤
-│  CIM/IEC    │ ──▶ │ Distribution│ ──▶ │   CYME      │
-├─────────────┤     │   System    │     ├─────────────┤
-│    CYME     │     │             │     │    JSON     │
-└─────────────┘     └─────────────┘     └─────────────┘
-   READERS          INTERMEDIATE          WRITERS
+pip install opendss-designer-convert      # once published
+pip install -e .                          # from a checkout, for now
+pip install -e ".[dev]"                   # plus pytest, ruff and OpenDSSDirect.py for the tests
 ```
 
-1. **Readers** parse distribution system files and create component objects
-2. All components are stored in a **GDM DistributionSystem** instance (intermediate format)
-3. **Writers** export the data to the desired output format
+Python 3.11 or newer (grid-data-models requires 3.11). Pure Python: no
+mdbtools, no compiled extension of its own, no network access at run time.
+Developed and tested on Windows 11 with Python 3.12.
 
-## Installation
+Runtime dependencies: `grid-data-models~=2.4.0`, `infrasys>=1.2`,
+`NREL-altdss-schema>=0.0.3,<0.1`, `pydantic>=2.6`, `pandas>=2.0`,
+`numpy>=1.26`, `access-parser>=0.0.6` (Apache-2.0, reads Access databases).
+grid-data-models is heavy (it brings geopandas, pyarrow, h5py and plotly) and
+infrasys pins `rich<14`; install into its own environment if that matters.
 
-### From PyPI (Recommended)
+## Command line
 
-```bash
-pip install nrel-ditto
+```
+opendss-designer-convert cyme Network.txt Equipment.txt Load.txt -o out/
+opendss-designer-convert synergi Model.mdb Warehouse.mdb -o out/
 ```
 
-### From Source
+Writes the OpenDSS files into `out/`, prints warnings to stderr and exits 0;
+on failure prints `error: ...` and exits 1. Compile `out/Master.dss`.
 
-```bash
-git clone https://github.com/NREL-Distribution-Suites/ditto.git
-cd ditto
-pip install -e .
-```
-
-### Optional Dependencies
-
-```bash
-# For documentation building
-pip install nrel-ditto[doc]
-
-# For development (includes pytest, ruff)
-pip install nrel-ditto[dev]
-```
-
-## Quick Start
-
-### Reading an OpenDSS Model
+## Python API: the plugin contract
 
 ```python
-from pathlib import Path
-from ditto.readers.opendss.reader import Reader
+from opendss_designer_convert import FORMATS, Conversion, ConversionError, Format, convert
 
-# Read an OpenDSS model
-opendss_file = Path("path/to/IEEE13NODE.dss")
-reader = Reader(opendss_file)
-system = reader.get_system()
-
-# Access components
-print(f"Loaded {len(list(system.get_buses()))} buses")
+result = convert("cyme", [("Network.txt", net_bytes), ("Equipment.txt", eq_bytes),
+                          ("Load.txt", load_bytes)])
+result.main       # "Master.dss" - the file with `New Circuit.`
+result.files      # [("Master.dss", "..."), ("Lines.dss", "..."), ..., ("BusCoords.csv", "...")]
+result.warnings   # ["Load LOAD652_B has 0 kW and 0 kVAR. Skipping... (and 9 more like this)"]
 ```
-
-### Converting CIM to OpenDSS
 
 ```python
-from pathlib import Path
-from ditto.readers.cim_iec_61968_13.reader import Reader
-from ditto.writers.opendss.write import Writer
+@dataclass(frozen=True)
+class Format:
+    key: str                     # "cyme" | "synergi"
+    label: str                   # "CYME", "Synergi Electric"
+    extensions: tuple[str, ...]  # (".txt",) | (".mdb",)
+    help: str                    # which files to select
+    max_files: int               # 3 | 2
 
-# Read CIM model
-cim_reader = Reader("path/to/ieee13_cim.xml")
-cim_reader.read()
-system = cim_reader.get_system()
+FORMATS: dict[str, Format]       # only formats that work: "cyme", "synergi"
 
-# Write to OpenDSS format
-writer = Writer(system)
-writer.write(
-    output_path=Path("./output"),
-    separate_substations=False,
-    separate_feeders=False
-)
+@dataclass
+class Conversion:
+    files: list[tuple[str, str]]  # (file name, OpenDSS text): every file the model needs
+    main: str                     # the file that defines the circuit
+    warnings: list[str]           # safe to show a user
+
+class ConversionError(Exception):
+    """str(exc) is safe to show a user (no paths, no tracebacks)."""
+
+def convert(fmt: str, files: list[tuple[str, bytes]]) -> Conversion: ...
+__version__: str
 ```
 
-### Serializing to JSON
+What `convert` guarantees, because it runs on a public web server:
 
-```python
-from pathlib import Path
-from ditto.readers.opendss.reader import Reader
+- It works only in a directory from `tempfile.mkdtemp()`, removed in a
+  `finally` whether the conversion succeeds or not. Uploaded files are written
+  there under their base name only (directory parts are stripped); a name that
+  is not plain letters, digits, `.`, `_` or `-` (at most 128 characters, not
+  starting with a dot) is refused.
+- No subprocesses, no network access, no reads or writes outside that
+  directory. The Synergi reader is pure Python; there is no mdbtools fallback.
+- At most `max_files` files and `MAX_TOTAL_BYTES` (256 MB) in total.
+- Every failure is a `ConversionError` with a message meant for the user.
+  Unexpected exceptions are logged with `logging` (logger
+  `opendss_designer_convert`) and replaced by a generic message.
+- Output is plain OpenDSS that OpenDSS Designer's importer takes: `Master.dss`
+  plus the files it redirects to, all by bare file name; no `clear`, `solve`,
+  `show`, `export`, `plot`, `set datapath` or similar. Bus coordinates, when
+  the model has them, are a `BusCoords.csv` companion (`bus,x,y` per line)
+  loaded by `Buscoords BusCoords.csv` at the end of `Master.dss`.
+- Warnings logged by the readers and writer are returned in
+  `Conversion.warnings`; messages from the same line of code are folded into
+  one entry with a count, and the list is capped at 50 kinds.
 
-# Read and serialize
-reader = Reader(Path("IEEE13NODE.dss"))
-system = reader.get_system()
-system.to_json(Path("IEEE13NODE.json"), overwrite=True)
+Side effects to know about: while a conversion runs, the
+`opendss_designer_convert` logger is lowered to WARNING if the host has it set
+higher (so warnings can be collected), and loguru output from
+grid-data-models and infrasys is disabled process-wide (it otherwise prints,
+for example, every bus with an unconnected neutral to stderr).
+
+### Which files to select
+
+- **CYME**: the ASCII exports (`.txt`): the network file (with `[SECTION]` and
+  `[NODE]`), the equipment file (`[CONDUCTOR]`, `[CABLE]`, `[TRANSFORMER]`...)
+  and, if loads were exported separately, the load file (`[CUSTOMER LOADS]`).
+  Files are recognised by content, so names and order do not matter, and one
+  self-contained export holding all three also works. Without a load file the
+  model converts with no loads, and a warning says so. ANSI (Windows-1252),
+  UTF-8 and UTF-16 files are accepted. A load file with several load models
+  converts the lowest-numbered one, with a warning.
+- **Synergi**: the model database and the equipment warehouse database
+  (`.mdb`). They are told apart by their tables (`InstSection` and `Node` for
+  the model, `DevConductors` and `DevTransformers` for the warehouse); one
+  database holding both also works.
+
+## What is converted
+
+| | CYME | Synergi |
+|---|---|---|
+| Source | `[SOURCE]` + `[SOURCE EQUIVALENT]` -> `New Circuit` (more sources -> extra `Vsource`) | `InstFeeders` -> `New Circuit` at the feeder's node |
+| Lines | overhead by phase/geometry -> `LineGeometry` + `WireData`; unbalanced/cable -> `LineCode` (R, X, C matrices) | `InstSection` -> `LineGeometry` or `LineCode` (falls back to matrix impedance) |
+| Switches, breakers, sectionalizers, fuses, reclosers | `Line ... Switch=True` with switch codes; open devices `open`ed | switches, breakers, fuses, reclosers likewise |
+| Transformers | two-winding, three-winding, by-phase and center-tapped -> `XfmrCode` + `Transformer` | primary transformers (`InstPrimaryTransformers`) |
+| Regulators | -> `Transformer` + `RegControl`; single-phase banks as one unit per phase | single-phase units with `RegControl` |
+| Capacitors | fixed shunt capacitors | (none in the sample) |
+| Loads | spot and distributed customer loads with ZIP model -> `Load` | `Loads` table -> `Load` |
+| DER | not read | solar -> `PVSystem` (no sample to check it); generators and batteries are read but not written (a warning says how many) |
+| Coordinates | node X/Y -> `BusCoords.csv` | `Node` X/Y -> `BusCoords.csv` |
+
+Not converted (as upstream): capacitor controls (upstream issue #93; a warning
+names any that are dropped), load shapes and time series, protection settings
+and TCC curves beyond the device as a switch, Synergi distribution
+transformers (`InstDTrans`; Synergi loads sit on the primary sections).
+
+## What has been verified
+
+Every conversion test converts, compiles the result with OpenDSSDirect.py
+0.9.4 (`clear`, `compile`, `solve`) and checks that it compiles and converges.
+
+| Format | Sample (from DiTTo's own repositories) | Version | Result |
+|---|---|---|---|
+| CYME | `tests/data/cyme_models/4_node` (IEEE 4-node) | CYME 8.00 | compiles, converges |
+| CYME | `tests/data/cyme_models/13_node` (IEEE 13-node) | CYME 5.04 | compiles, converges; within 1 % of EPRI's IEEE 13 model (regulators off) |
+| CYME | `tests/data/cyme_models/ieee_123_node` | CYME 8.00 | compiles, converges; within 1 % of EPRI's IEEE 123 model; the ganged regulator settles on the reference tap |
+| Synergi | `m4.mdb` + `Warehouse.mdb` (a real 12.47 kV feeder, 827 nodes) | Synergi Electric 6.4.0 | compiles, converges with controls on; 179 loads, 3 regulators |
+
+The "within 1 %" check is upstream's: minimum, maximum and mean node voltage
+and feeder-head P and Q, with the source at 1.0 pu, regulators disabled and
+taps at 1.
+
+Not verified: other CYME versions (notably CYME 9, legacy issue #397),
+imperial-unit CYME exports, CYME XML (`.sxst`) exports, other Synergi
+versions or warehouses, Synergi models with capacitors, DER or reclosers,
+and the electrical accuracy of the Synergi result (there is no Synergi
+power-flow result to compare against). Linux is exercised only by the CI
+workflow, not locally.
+
+## Test data
+
+- The CYME samples and the EPRI IEEE 13 and 123 reference models are in
+  `tests/data/` (from upstream).
+- The Synergi sample pair is **not committed**. It is the only Synergi data in
+  any DiTTo repository: `tests/data/big_cases/synergi/m4.mdb` and
+  `Warehouse.mdb` in commit `975e167` of the legacy repository (branch
+  `fuse_wenbo`). It is real utility data (a Hawaiian Electric feeder with
+  geographic coordinates), so it is left out of this repository; decide
+  before publishing it. To fetch it:
+
+  ```
+  git clone --filter=blob:none --no-checkout https://github.com/NatLabRockies/ditto legacy-ditto
+  git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/m4.mdb > tests/data/synergi/m4.mdb
+  git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/Warehouse.mdb > tests/data/synergi/Warehouse.mdb
+  ```
+
+  `tests/data/synergi/*.mdb` is git-ignored. The Synergi tests skip when the
+  files are absent; `ODC_SYNERGI_SAMPLES=<folder>` points them elsewhere.
+
+## Changes from upstream DiTTo
+
+Trimmed: the CIM reader and writer, the OpenDSS reader, the MCP server, the
+typer CLI, the docs site, their tests and dependencies (rdflib, typer, mcp,
+rich, loguru as a direct dependency, opendssdirect at run time). The package
+is `opendss_designer_convert`, so it cannot clash with an installed `ditto`.
+
+Fixed (each has a test):
+
+- **Regulator banks (upstream #77).** A CYME bank of single-phase regulators
+  was written as one three-phase transformer controlled by phase A alone. It
+  is now one unit and one RegControl per phase; gang-operated three-phase units
+  stay one transformer. The units of a bank are kept side by side rather than
+  chained in series (which opened phases B and C).
+- **Line-drop compensation.** Every RegControl was written with `Bus=` set to
+  the regulator's own terminal, which makes OpenDSS ignore R and X. It is now
+  omitted (with `PTPhase` for ganged units). With this, the IEEE 123 ganged
+  regulator matches EPRI's reference tap.
+- **Regulator starting tap.** The CYME tap was put on both windings, giving a
+  1:1 ratio; the source-side winding now stays at 1.0.
+- **Several sources (legacy #402, #422, #427).** A second source became a
+  second `New Circuit`, discarding everything before it; it is now an extra
+  `Vsource`, and the source meter no longer fails on several sources.
+- **Several load models.** A CYME load file with more than one load model
+  raised an error; the first is now converted, with a warning. A load file
+  without `[CUSTOMER LOADS]` no longer raises `KeyError`.
+- **Encodings.** CYME files were opened in the platform's default encoding;
+  ANSI, UTF-8 and UTF-16 exports now all work on every platform.
+- **sqrt(3).** Line-to-neutral conversion used 1.732, so 4.16 kV became
+  4.1599 kV and voltage bases were duplicated.
+- **Synergi without mdbtools (legacy #188, #425).** Upstream downloaded an
+  mdbtools binary at run time and ran it in a subprocess for each table; the
+  databases are now read in pure Python with access_parser.
+- **Synergi feeder head.** Chosen with ties broken by set order, so the source
+  moved between runs; it is now the node named after the feeder.
+- **Synergi devices sharing a section** (a switch and a transformer) were
+  written in parallel, so the closed switch shorted the transformer; they are
+  now in series.
+- **Synergi orientation.** Section from/to order is not the direction of flow;
+  transformers are turned so the high-voltage winding faces the source, and
+  regulators so winding 1 does.
+- **Synergi voltages.** Bus voltages set while reading transformers made every
+  line on those buses fail validation and vanish; voltages are now propagated
+  from the source after reading.
+- **Synergi missing transformer type.** A primary transformer whose type is
+  missing from the warehouse is built from its name ("12.47/11.5KV 3000KVA")
+  with a generic 0.5 % R / 6 % X and a warning, instead of being dropped.
+- The OpenDSS writer accepts a `str` output path (upstream #12).
+
+Known limitations:
+
+- No WindMil (see the top of this file).
+- Capacitor controls are not converted (upstream #93).
+- The Synergi sample's warehouse lacks its 12.47/11.5 kV autotransformer, so
+  that unit is generic; with it the feeder's far end solves at about 0.84 pu
+  with the regulators at or near full boost. Whether that matches Synergi is unknown.
+- CYME regulators are placed at the source end of their section; CYME's
+  `Location` field is not read.
+- Lines carry the neutral as an explicit fourth conductor (upstream's choice).
+
+## Development
+
+```
+python -m pytest
+ruff check .
 ```
 
-### Loading from JSON
-
-```python
-from pathlib import Path
-from gdm import DistributionSystem
-
-# Deserialize a saved model
-system = DistributionSystem.from_json(Path("IEEE13NODE.json"))
-```
-
-## Supported Formats
-
-### Readers (Input)
-
-| Format | Status | Description |
-|--------|--------|-------------|
-| OpenDSS | ✅ Complete | Full support for OpenDSS models |
-| CIM/IEC 61968-13 | ✅ Complete | Common Information Model support |
-| CYME | ✅ Complete | CYME network models |
-| Synergi | 🚧 In Progress | Synergi network models |
-
-
-### Writers (Output)
-
-| Format | Status | Description |
-|--------|--------|-------------|
-| OpenDSS | ✅ Complete | Full DSS file generation |
-| JSON/GDM | ✅ Complete | Serialized GDM format |
-| CIM/IEC 61968-13 | ✅ Complete | Common Information Model support |
-
-## Supported Components
-
-DiTTo handles a comprehensive set of distribution system components:
-
-- **Network**: Buses, Lines/Branches, Cables, Conductors
-- **Transformers**: Distribution transformers with multiple windings
-- **Loads**: Various load types (constant power, impedance, ZIP)
-- **Generation**: PV systems, Voltage sources
-- **Protection**: Fuses, Regulators with controllers
-- **Storage**: Battery/energy storage systems
-- **Capacitors**: Shunt capacitors
-- **Time-Series**: Load shapes and profiles
-
-## Project Structure
-
-```
-ditto/
-├── src/ditto/
-│   ├── readers/           # Format parsers
-│   │   ├── opendss/       # OpenDSS reader
-│   │   ├── cim_iec_61968_13/  # CIM reader
-│   │   └── cyme/          # CYME reader
-│   ├── writers/           # Format exporters
-│   │   └── opendss/       # OpenDSS writer
-│   └── enumerations.py    # Shared enumerations
-├── tests/                 # Test suite
-├── docs/                  # Documentation
-└── pyproject.toml         # Project configuration
-```
-
-## Documentation
-
-- [Architecture Guide](ARCHITECTURE.md) - System design and components
-- [API Reference](API.md) - Reader and writer documentation
-- [Examples](EXAMPLES.md) - Detailed usage examples
-- [Contributing Guide](CONTRIBUTING.md) - How to contribute
-
-## Requirements
-
-- Python 3.10, 3.11, or 3.12
-- Dependencies are automatically installed:
-  - `grid-data-models` - GDM intermediate representation
-  - `opendssdirect.py` - OpenDSS interface
-  - `rdflib` - RDF/XML parsing for CIM
-  - `NREL-altdss-schema` - DSS output schema
-
-## Contributing
-
-DiTTo is an open-source project and contributions are welcome! Whether it's a typo fix, bug report, or a new parser, we appreciate your help.
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`pytest`)
-5. Submit a Pull Request
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-## Getting Help
-
-- **Issues**: [GitHub Issues](https://github.com/NLR-Distribution-Suite/ditto/issues)
-- **Questions**: Contact [Tarek Elgindy](mailto:tarek.elgindy@nrel.gov)
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-DiTTo is developed and maintained by the [NREL Distribution Suites](https://github.com/NLR-Distribution-Suite) team at the National Renewable Energy Laboratory.
+The tests need `opendssdirect.py` (in the `test` extra). On Windows,
+pytest's faulthandler is turned off in `pyproject.toml` because the OpenDSS
+engine raises and catches its own exceptions, which faulthandler reports as
+fatal.
