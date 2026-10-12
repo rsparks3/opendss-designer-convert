@@ -63,11 +63,14 @@ include = ["src/opendss_designer_convert", "tests", "README.md", "LICENSE"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra"
+# -p no:faulthandler: the OpenDSS engine (a Free Pascal DLL) raises and catches
+# its own SEH exceptions on Windows, which faulthandler would print as "fatal".
+addopts = "-ra -p no:faulthandler"
 testpaths = ["tests"]
 filterwarnings = [
   "ignore:Accessing the 'model_fields' attribute on the instance is deprecated:DeprecationWarning",
   "ignore:Pydantic serializer warnings:UserWarning",
+  "ignore:gdm.distribution is deprecated:DeprecationWarning",
 ]
 
 [tool.ruff]
