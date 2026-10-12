@@ -186,21 +186,14 @@ workflow, not locally.
 
 - The CYME samples and the EPRI IEEE 13 and 123 reference models are in
   `tests/data/` (from upstream).
-- The Synergi sample pair is **not committed**. It is the only Synergi data in
-  any DiTTo repository: `tests/data/big_cases/synergi/m4.mdb` and
-  `Warehouse.mdb` in commit `975e167` of the legacy repository (branch
-  `fuse_wenbo`). It is real utility data (a Hawaiian Electric feeder with
-  geographic coordinates), so it is left out of this repository; decide
-  before publishing it. To fetch it:
-
-  ```
-  git clone --filter=blob:none --no-checkout https://github.com/NatLabRockies/ditto legacy-ditto
-  git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/m4.mdb > tests/data/synergi/m4.mdb
-  git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/Warehouse.mdb > tests/data/synergi/Warehouse.mdb
-  ```
-
-  `tests/data/synergi/*.mdb` is git-ignored. The Synergi tests skip when the
-  files are absent; `ODC_SYNERGI_SAMPLES=<folder>` points them elsewhere.
+- The Synergi sample pair, `tests/data/synergi/m4.mdb` and `Warehouse.mdb`,
+  is the only Synergi data in any DiTTo repository. It was copied unchanged
+  from commit `975e167` of the legacy repository
+  (<https://github.com/NatLabRockies/ditto>, branch `fuse_wenbo`,
+  `tests/data/big_cases/synergi/`), where it is published under DiTTo's
+  BSD-3-Clause licence. It is a real Hawaiian Electric (Oahu) feeder with
+  geographic coordinates. `ODC_SYNERGI_SAMPLES=<folder>` points the Synergi
+  tests at another pair.
 
 ## Changes from upstream DiTTo
 

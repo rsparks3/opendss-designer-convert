@@ -183,5 +183,3 @@ cython_debug/
 /*.dss
 /test_circuit/
 
-# Synergi sample databases are fetched, not committed (see README "Test data")
-tests/data/synergi/*.mdb

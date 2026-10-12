@@ -19,13 +19,6 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Fetch the Synergi sample pair (not committed; see README "Test data")
-        shell: bash
-        run: |
-          git clone --quiet --filter=blob:none --no-checkout https://github.com/NatLabRockies/ditto legacy-ditto
-          mkdir -p tests/data/synergi
-          git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/m4.mdb > tests/data/synergi/m4.mdb
-          git -C legacy-ditto show 975e167:tests/data/big_cases/synergi/Warehouse.mdb > tests/data/synergi/Warehouse.mdb
       - name: Lint
         run: ruff check .
       - name: Test
