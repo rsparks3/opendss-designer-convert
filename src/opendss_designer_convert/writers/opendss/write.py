@@ -249,6 +249,7 @@ class Writer(AbstractWriter):
         separate_feeders: bool = True,
         profile_type: type[NonSequentialTimeSeries | SingleTimeSeries] = SingleTimeSeries,
     ):
+        output_path = Path(output_path)  # a str path used to fail (upstream #12)
         self.profile_type = profile_type
         base_redirect = set()
         feeders_redirect = defaultdict(set)
