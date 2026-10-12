@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
+import numpy as np
 import opendssdirect as odd
 from loguru import logger
-import numpy as np
 
 
 def get_model_voltage_drop(model_name: str):

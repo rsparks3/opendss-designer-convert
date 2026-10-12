@@ -3,11 +3,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ditto.enumerations import OpenDSSFileTypes
-from ditto.readers.cyme.reader import Reader as CymeReader
-from ditto.writers.opendss.write import Writer
+from opendss_designer_convert.enumerations import OpenDSSFileTypes
+from opendss_designer_convert.readers.cyme.reader import Reader as CymeReader
+from opendss_designer_convert.writers.opendss.write import Writer
 from tests.helpers import get_metrics_reduced
-
 
 test_folder = Path(__file__).parent.parent
 

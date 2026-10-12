@@ -1,11 +1,12 @@
 """ Module for testing parsers."""
-from pathlib import Path
-import os
-import pytest
-from ditto.readers.synergi.reader import Reader
-from ditto.writers.opendss.write import Writer
 import sys
+from pathlib import Path
+
+import pytest
 from loguru import logger
+
+from opendss_designer_convert.readers.synergi.reader import Reader
+from opendss_designer_convert.writers.opendss.write import Writer
 
 logger.add(sys.stderr, level="WARNING")
 
@@ -33,7 +34,7 @@ def test_synergi_reader(synergi_folder: Path, tmp_path):
     if not export_path.exists():
         export_path.mkdir(parents=True, exist_ok=True)
 
-    reader = Reader(synergi_folder/ synergi_model_name, synergi_folder / synergi_equipment_name )    
+    reader = Reader(synergi_folder/ synergi_model_name, synergi_folder / synergi_equipment_name )
     writer = Writer(reader.get_system())
     writer.write(export_path / "opendss", separate_substations=False, separate_feeders=False)
     system = reader.get_system()

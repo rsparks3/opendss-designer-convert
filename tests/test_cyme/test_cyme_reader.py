@@ -1,11 +1,13 @@
 """Module for testing parsers."""
 
-from pathlib import Path
-import pytest
-from ditto.readers.cyme.reader import Reader
-from ditto.writers.opendss.write import Writer
 import sys
+from pathlib import Path
+
+import pytest
 from loguru import logger
+
+from opendss_designer_convert.readers.cyme.reader import Reader
+from opendss_designer_convert.writers.opendss.write import Writer
 
 logger.add(sys.stderr, level="WARNING")
 
